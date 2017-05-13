@@ -17,7 +17,7 @@
 # 2) place this script and pixelGettingFunctions.R into the same folder
 #
 # 3) create a tiffList file and complete the data for tiffFileName, wormNum, channal,
-# strain,TEVcs. name is crated automatically by the script.
+# strain,TEVcs. name is created automatically by the script.
 #
 # 4) set working directory by going to Session/Set Working Directory/To Source File Location
 #
