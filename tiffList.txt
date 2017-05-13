@@ -1,0 +1,5 @@
+tiffFileName	wormNum	channel	sex	strain	TEVcs
+2017.04.20.hermaphrodite_c1_G.tif	1	G	herm	595	N
+2017.04.20.hermaphrodite_c2_R.tif	1	R	herm	595	N
+2017.04.20.male_c1_G.tif	2	G	male	595	N
+2017.04.20.male_c2_R.tif	2	R	male	595	N

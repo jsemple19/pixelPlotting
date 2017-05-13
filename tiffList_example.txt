@@ -1,0 +1,9 @@
+tiffFileName	wormNum	channel	sex	strain	TEVcs
+2017.05.05.601herma1_xuv_c1_G.tif	1	G	herm	601	Y
+2017.05.05.601herma1_xuv_c2_R.tif	1	R	herm	601	Y
+2017.05.05.601herma2_xuv_c1_G.tif	2	G	herm	601	Y
+2017.05.05.601herma2_xuv_c2_R.tif	2	R	herm	601	Y
+2017.05.05.604.herma1_xuv_c1_G.tif	3	G	herm	604	N
+2017.05.05.604.herma1_xuv_c2_R.tif	3	R	herm	604	N
+2017.05.05.604.herma2_xuv_c1_G.tif	4	G	herm	604	N
+2017.05.05.604.herma2_xuv_c2_R.tif	4	R	herm	604	N

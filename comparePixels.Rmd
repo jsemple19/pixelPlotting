@@ -1,0 +1,234 @@
+---
+title: "tissue specific DC"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/MeisterLab/otherPeopleProjects/Julian/images/2017.05.05.601v604")
+
+library(tiff) #for tiff import
+library(raster) #for tiff? 
+library(hexbin) #for plotting
+library(preprocessCore) #for quantile normalisation
+library(sm)
+
+#source("pixelGettingFunctions.R")
+```
+# Preprocessing the data
+Stitching in fiji seemed to merge the channels. So i stitched in xuvtools, and saved with _xuv extension and .ims format. For some reason, the output seemed to have an additional slice added in alternate slices. In Fiji it looks black, so i just removed it by doing:
+Image/Stacks/Tools/Make substack… 
+in the following box on the bottom line, choose only frame 1 (bottom line)
+
+Then, for my own clarity, i separated the red and green channels so it is easier to keep track of what is from where. To do this i go to:
+Image/Stacks/Tools/DeInterleave
+I then save the green channel with extension _c1_G.tif
+and the red channel with _c2_R.tif
+
+Than i put all these files from the two hermaphrodites in a single new directory. I place the script in the same directory, and off we go.
+
+
+# Reading in the data
+```{r reading in data}
+g1<-readTIFF("2017.05.05.601herma2_xuv_c1_G.tif",all=TRUE,as.is=TRUE)
+r1<-readTIFF("2017.05.05.601herma2_xuv_c2_R.tif",all=TRUE,as.is=TRUE)
+g2<-readTIFF("2017.05.05.604.herma2_xuv_c1_G.tif",all=TRUE,as.is=TRUE)
+r2<-readTIFF("2017.05.05.604.herma2_xuv_c2_R.tif",all=TRUE,as.is=TRUE)
+nlay1<-length(g1) #number of slices for 601herma2
+nlay2<-length(g2) #number of slices for 604herma2
+
+```
+
+This loads each tiff as a list of arrays. Each item in the list is one z section and the array has dimenstions y by x. So to access a particular pixel as position xyz, its address is: listObject[[z]][x,y].
+We want to immediately reduce the size of the data. we are not interested in most pixels that are just black. So we will scroll through the remove any pixel that has a value below a threshold. First we determine what that threshold should be by running it with various values between 1 and 10.
+
+```{r find threshold for pixel selection}
+# function that gets the pixels that are below a threshold in both red and green channels
+getColourPixels<-function(array1,array2,threshold) {
+  i<-which(unlist(array1)>threshold & unlist(array2)>threshold)
+  return(list(unlist(array1)[i],unlist(array2)[i]))
+}
+#check different thresholds for 601.herma2 to see where it levels out.
+threshVpix1<-data.frame(threshold=c(1:10),pixNum=NA)
+for (th in 1:10) {
+  gvals1<-c()
+  rvals1<-c()
+  for (i in 1:nlay1) {
+    both1<-getColourPixels(g1[[i]],r1[[i]],threshold=th)
+    gvals1<-c(gvals1,both1[[1]])
+    rvals1<-c(rvals1,both1[[2]])
+  }
+  threshVpix1$pixNum[th]<-length(gvals1)
+}
+#do the same for 604.herma2 
+threshVpix2<-data.frame(threshold=c(1:10),pixNum=NA)
+for (th in 1:10) {
+  gvals2<-c()
+  rvals2<-c()
+  for (i in 1:nlay2) {
+    both2<-getColourPixels(g2[[i]],r2[[i]],threshold=th)
+    gvals2<-c(gvals2,both2[[1]])
+    rvals2<-c(rvals2,both2[[2]])
+  }
+  threshVpix2$pixNum[th]<-length(gvals2)
+}
+
+#plot the results:
+par(mfrow=c(1,2))
+plot(threshVpix1$threshold,threshVpix1$pixNum,xlab="threshold value",ylab="remaining pixels",main="pixels kept at different thresholds for 601.h2")
+abline(h=threshVpix1$pixNum[4]) #stick a horizontal line as 4 pixels for visual reference
+
+plot(threshVpix2$threshold,threshVpix2$pixNum,xlab="threshold value",ylab="remaining pixels",main="pixels kept at different thresholds for 604.h2")
+abline(h=threshVpix2$pixNum[4])
+```
+
+A threshold of 4 looks good to me. and i will use it from now on. 
+
+# Selecting relevant pixels
+So now i will rerun the pixel selector and keep all pixels taht have values >4 in both channels. The rest will be discarded.
+```{r select informative pixels}
+th<-4
+#first for 601.herm2
+gvals1<-c()
+rvals1<-c()
+for (i in 1:nlay1) {
+  both1<-getColourPixels(g1[[i]],r1[[i]],threshold=th)
+  gvals1<-c(gvals1,both1[[1]])
+  rvals1<-c(rvals1,both1[[2]])
+}
+
+#now for 604.herm2
+gvals2<-c()
+rvals2<-c()
+for (i in 1:nlay2) {
+  both2<-getColourPixels(g2[[i]],r2[[i]],threshold=th)
+  gvals2<-c(gvals2,both2[[1]])
+  rvals2<-c(rvals2,both2[[2]])
+}
+
+#601.herm2 data started with: 
+length(unlist(g1))
+#now we have
+length(gvals1)
+
+#604.herm2 data started with:
+length(unlist(g2))
+#now we have
+length(gvals2)
+```
+
+Now we simply have lists of values paired by position in the list between the green and the red for a given worm. i.e. gvals1[5] and rvals1[5] have the green and red values respectively of the same image position in 601.herm2. But all other positional information has now been lost. (and gvals2 and rvals2 contain paired info for 604.herm2) 
+
+#Plotting - raw pixel values
+Now we can plot the red vs the green values for all pixels in an image. It is best to start with plotting the raw values, which are more intuitive and help us evaluate normalization and transformation proceedures.
+Plotting such large scatter plots is not user friendly as there is lots of overplotting (pionts on top of points) and it takes forever and files sizes are large. So will use some binning plotting functions that bin close points together into a single value (like a two dimensional histogram) i.e. smoothed scatter plot and a hexbin plot.
+
+```{r different scatter plot options}
+par(mfrow=c(1,2))
+smoothScatter(gvals1,rvals1,xlab="green pixel value",ylab="red pixel value",main="601 herm2  (DC inactivated)")
+smoothScatter(gvals2,rvals2,xlab="green pixel value",ylab="red pixel value",main="604 herm2  (DC not inactivated)")
+
+plot(hexbin(gvals1,rvals1),xlab="green pixel value",ylab="red pixel value",main="601 herm2  (DC inactivated)")
+plot(hexbin(gvals2,rvals2),xlab="green pixel value",ylab="red pixel value",main="604 herm2  (DC not inactivated)")
+```
+
+Unfortunately the distribution of the data means that these plots show little variation.
+So another alternative is to randomly sample a subset of the data point. Random sampling should ensure that the basic distribution of the points remains the same. 
+```{r subsampled scatter plot}
+plotSubSampleScatter<-function(vec1,vec2,points=50000,...) {
+  i<-sample(1:length(vec1),points)
+  ssvec1<-vec1[i]
+  ssvec2<-vec2[i]
+  plot(ssvec1,ssvec2,pch=16,cex=0.5,col="#0000ff33",...)
+}
+par(mfrow=c(1,2))
+plotSubSampleScatter(gvals1,rvals1,points=50000, xlab="green pixel value",ylab="red pixel value",main="601 herm2  (DC inactivated)")
+plotSubSampleScatter(gvals2,rvals2,points=50000, xlab="green pixel value",ylab="red pixel value",main="604 herm2  (DC not inactivated)")
+```
+
+#Transforming the data
+The pixel values are very skewed in their distribution - many low values and few high values. To imporve the distribution we will log transform the values and repeat the plots.
+
+```{r plotting transformed vaues}
+logG1<-log2(gvals1)
+logR1<-log2(rvals1)
+logG2<-log2(gvals2)
+logR2<-log2(rvals2)
+
+par(mfrow=c(1,2))
+smoothScatter(logG1,logR1,xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+smoothScatter(logG2,logR2,xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+
+plot(hexbin(logG1,logR1),xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+plot(hexbin(logG2,logR2),xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+
+plotSubSampleScatter(logG1,logR1,points=50000,xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+plotSubSampleScatter(logG2,logR2,points=50000,xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+
+```
+It is normal that log transformed values have these artefacts at low values. but at least data is better spread.
+#Normalisation
+It is difficult to normalise between samples here, because there are different pixel numbers in each data set. but we can normalize within a sample (red and green values from single TIFF).
+First lets do boxplots of the un-normalised values (but log transformed):
+```{r boxplot unnormalised values}
+boxplot(logG1,logR1,logG2,logR2,varwidth=TRUE,notch=TRUE,names=c("log(g1)","log(r1)","log(g2)","log(r2)"),col=c("green","red","green","red"))
+```
+Now lets apply quantile normalisation. This method uses the rank order of values to assign new values that will be similarly distributed in the two groups. (see https://davetang.org/muse/2014/07/07/quantile-normalisation-in-r/ for a bit of an illustration. there may be better explanations elsewhere).
+```{r quantile normalisation}
+df1norm<-normalize.quantiles(as.matrix(cbind(logG1,logR1)))
+df2norm<-normalize.quantiles(as.matrix(cbind(logG2,logR2)))
+boxplot(df1norm[,1],df1norm[,2],df2norm[,1],df2norm[,2],varwidth=TRUE,notch=TRUE,names=c("log(g1)","log(r1)","log(g2)","log(r2)"),col=c("green","red","green","red"))
+```
+
+Distributions are looking more similar, but medians of two samples very different, so maybe center distributions around 0 by subtracting median as Martin suggested.
+
+```{r median centered and normalised}
+logG1<-logG1-median(logG1)
+logR1<-logR1-median(logR1)
+logG2<-logG2-median(logG2)
+logR2<-logR2-median(logR2)
+df1norm<-normalize.quantiles(as.matrix(cbind(logG1,logR1)))
+df2norm<-normalize.quantiles(as.matrix(cbind(logG2,logR2)))
+boxplot(df1norm[,1],df1norm[,2],df2norm[,1],df2norm[,2],varwidth=TRUE,notch=TRUE,names=c("log(g1)","log(r1)","log(g2)","log(r2)"),col=c("green","red","green","red"))
+```
+
+Distributions looking a lot more similar now. Lets repeat the scatter plots to ensure we have not lost all of the changes we want to see.
+
+```{r}
+par(mfrow=c(1,2))
+smoothScatter(df1norm[,1],df1norm[,2],xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+smoothScatter(df2norm[,1],df2norm[,2],xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+
+plot(hexbin(df1norm[,1],df1norm[,2]),xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+plot(hexbin(df2norm[,1],df2norm[,2]),xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+
+plotSubSampleScatter(df1norm[,1],df1norm[,2],points=50000,xlab="log2(green)",ylab="log2(red)",main="601 herm2  (DC inactivated)")
+plotSubSampleScatter(df2norm[,1],df2norm[,2],points=50000,xlab="log2(green)",ylab="log2(red)",main="604 herm2  (DC not inactivated)")
+```
+
+ok. looks like our transformations and normalisations have not messed up the signal in our data (this is why we plotted the raw data to start with).
+Now, to better compare between samples we can combine the within-image data into single numbers for each pixel - the ratio of red to green (or rather the difference between the logs, remember that log(a/b)= log(a)-log(b))
+
+We cannot look at them with a scatter plot, because each sample has a different number of pixels, and there is no relation between the pixels in one sample and the other. Instead we can look at how the distributions change with histograms.
+
+```{r}
+par(mfrow=c(2,1))
+rgRatio1<-df1norm[,2]-df1norm[,1] #normalised log2(red/green)
+rgRatio2<-df2norm[,2]-df2norm[,1]
+hist(rgRatio1,col="grey",xlab="normalised log2(red/green)",main="601 herm2 (DC inactivated)",xlim=c(-4,4))
+hist(rgRatio2,col="grey",xlab="normalised log2(red/green)",main="604 herm2 (DC not inactivated)",xlim=c(-4,4))
+par(mfrow=c(1,1))
+plot(density(rgRatio1,adjust=3),col="purple",main="distribution of normalised log(R/G)")
+lines(density(rgRatio2,adjust=3),col="blue")
+legend("topright",c("601 herm2","604 herm2"),lty=c(1,1),col=c("purple","blue"),lwd=c(2.5,2.5))
+
+plot(density(logR1-logG1,adjust=3),col="purple",main="distribution of log(R/G)")
+lines(density(logR2-logG2,adjust=3),col="blue")
+legend("topright",c("601 herm2","604 herm2"),lty=c(1,1),col=c("purple","blue"),lwd=c(2.5,2.5))
+
+plot(density(rvals1/gvals1,adjust=3),col="purple",main="distribution of R/G")
+lines(density(rvals2/gvals2,adjust=3),col="blue")
+legend("topright",c("601 herm2","604 herm2"),lty=c(1,1),col=c("purple","blue"),lwd=c(2.5,2.5))
+
+```
+

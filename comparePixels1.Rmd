@@ -1,0 +1,271 @@
+---
+title: "tissue specific DC"
+output: pdf_document
+---
+#Setting up R
+The first time you run this you need to install some packages. To run it you need to changes eval=FALSE to eval=TRUE. Then put it back to FALSE, as you only need to run this code once
+```{r installation, eval=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("tiff")
+install.packages("raster")
+#install.packages("hexbin")
+#install.packaes("sm")
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("preprocessCore")
+```
+
+Now that the packages are installed, you need to load them (you need to do this every time).
+You also need to change the working directory. easiest way (since the script was placed in the same directory as our images) is to go to Session/Start working directory/to source file location... And comment out (put a # symbol in front of the setwd line below)
+
+```{r setup, include=TRUE}
+
+setwd("~/Documents/MeisterLab/otherPeopleProjects/Julian/images/2017.05.05.601v604")
+
+library(tiff) #for tiff import
+library(raster) #for tiff? 
+#library(hexbin) #for plotting
+#library(preprocessCore) #for quantile normalisation
+#library(sm)
+
+#source("pixelGettingFunctions.R")
+```
+# Preprocessing the data
+Stitching in fiji seemed to merge the channels. [maybe not, because this was before i realised that readTIFF transposed the x-y matrix to y-x... need to check again] So i stitched in xuvtools, and saved with _xuv extension and .ims format. For some reason, the output seemed to have an additional slice added in alternate slices. In Fiji it looks black, so i just removed it by doing:
+Image/Stacks/Tools/Make substack… 
+in the following box on the bottom line, choose only frame 1 (bottom line)
+
+Then, for my own clarity, i separated the red and green channels so it is easier to keep track of what is from where. To do this i go to:
+Image/Stacks/Tools/DeInterleave
+I then save the green channel with extension _c1_G.tif
+and the red channel with _c2_R.tif
+
+Than i put all these files from the two hermaphrodites in a single new directory. I place the script in the same directory, and off we go.
+
+
+# Reading in the data
+```{r reading in data}
+g1<-readTIFF("2017.05.05.601herma1_xuv_c1_G.tif",all=TRUE,as.is=TRUE)
+r1<-readTIFF("2017.05.05.601herma1_xuv_c2_R.tif",all=TRUE,as.is=TRUE)
+g2<-readTIFF("2017.05.05.604.herma1_xuv_c1_G.tif",all=TRUE,as.is=TRUE)
+r2<-readTIFF("2017.05.05.604.herma1_xuv_c2_R.tif",all=TRUE,as.is=TRUE)
+nlay1<-length(g1) #number of slices for 601herma2
+nlay2<-length(g2) #number of slices for 604herma2
+
+```
+
+This loads each tiff as a list of arrays. Each item in the list is one z section and the array has dimenstions y by x. So to access a particular pixel as position xyz, its address is: listObject[[z]][x,y].
+We want to immediately reduce the size of the data. we are not interested in most pixels that are just black. So we will scroll through the remove any pixel that has a value below a threshold. First we determine what that threshold should be by running it with various values between 1 and 10.
+
+```{r find threshold for pixel selection, eval=FALSE}
+# function that gets the pixels that are below a threshold in both red and green channels
+getColourPixels<-function(array1,array2,threshold) {
+  i<-which(unlist(array1)>threshold & unlist(array2)>threshold)
+  return(list(unlist(array1)[i],unlist(array2)[i]))
+}
+#check different thresholds for 601.herma2 to see where it levels out.
+threshVpix1<-data.frame(threshold=c(1:10),pixNum=NA)
+for (th in 1:10) {
+  gvals1<-c()
+  rvals1<-c()
+  for (i in 1:nlay1) {
+    both1<-getColourPixels(g1[[i]],r1[[i]],threshold=th)
+    gvals1<-c(gvals1,both1[[1]])
+    rvals1<-c(rvals1,both1[[2]])
+  }
+  threshVpix1$pixNum[th]<-length(gvals1)
+}
+#do the same for 604.herma2 
+threshVpix2<-data.frame(threshold=c(1:10),pixNum=NA)
+for (th in 1:10) {
+  gvals2<-c()
+  rvals2<-c()
+  for (i in 1:nlay2) {
+    both2<-getColourPixels(g2[[i]],r2[[i]],threshold=th)
+    gvals2<-c(gvals2,both2[[1]])
+    rvals2<-c(rvals2,both2[[2]])
+  }
+  threshVpix2$pixNum[th]<-length(gvals2)
+}
+
+#plot the results:
+par(mfrow=c(1,2))
+plot(threshVpix1$threshold,threshVpix1$pixNum, xlab="threshold value", 
+     ylab="remaining pixels", main="pixels kept at different thresholds for 601.h2",
+     cex.main=0.7)
+abline(h=threshVpix1$pixNum[4]) #stick a horizontal line as 4 pixels for visual reference
+
+plot(threshVpix2$threshold,threshVpix2$pixNum, xlab="threshold value", 
+     ylab="remaining pixels", main="pixels kept at different thresholds for 604.h2",
+     cex.main=0.7)
+abline(h=threshVpix2$pixNum[4])
+```
+
+A threshold of 4 looks good to me. and i will use it from now on. 
+
+# Selecting relevant pixels
+So now i will rerun the pixel selector and keep all pixels taht have values >4 in both channels. The rest will be discarded.
+```{r select informative pixels}
+# function that gets the pixels that are below a threshold in both red and green channels
+getColourPixels<-function(array1,array2,threshold) {
+  i<-which(unlist(array1)>threshold & unlist(array2)>threshold)
+  return(list(unlist(array1)[i],unlist(array2)[i]))
+}
+th<-4
+#first for 601.herm2
+gvals1<-c()
+rvals1<-c()
+for (i in 1:nlay1) {
+  both1<-getColourPixels(g1[[i]],r1[[i]],threshold=th)
+  gvals1<-c(gvals1,both1[[1]])
+  rvals1<-c(rvals1,both1[[2]])
+}
+
+#now for 604.herm2
+gvals2<-c()
+rvals2<-c()
+for (i in 1:nlay2) {
+  both2<-getColourPixels(g2[[i]],r2[[i]],threshold=th)
+  gvals2<-c(gvals2,both2[[1]])
+  rvals2<-c(rvals2,both2[[2]])
+}
+
+#601.herm2 data started with: 
+length(unlist(g1))
+#now we have
+length(gvals1)
+
+#604.herm2 data started with:
+length(unlist(g2))
+#now we have
+length(gvals2)
+```
+
+Now we simply have lists of values paired by position in the list between the green and the red for a given worm. i.e. gvals1[5] and rvals1[5] have the green and red values respectively of the same image position in 601.herm2. But all other positional information has now been lost. (and gvals2 and rvals2 contain paired info for 604.herm2) 
+
+#Plotting - raw pixel values
+Now we can plot the red vs the green values for all pixels in an image. It is best to start with plotting the raw values, which are more intuitive and help us evaluate normalization and transformation proceedures.
+Plotting such large scatter plots is not user friendly as there is lots of overplotting (pionts on top of points) and it takes forever and files sizes are large. So will use some binning plotting functions that bin close points together into a single value (like a two dimensional histogram).
+
+```{r different scatter plot options}
+par(mfrow=c(1,2))
+smoothScatter(gvals1,rvals1, xlab="green pixel value", ylab="red pixel value", 
+              main="601 herm2  (DC inactivated)")
+smoothScatter(gvals2,rvals2, xlab="green pixel value", ylab="red pixel value", 
+              main="604 herm2  (DC not inactivated)")
+```
+
+Unfortunately the distribution of the data means that these plots show little variation.
+So another alternative is to randomly sample a subset of the data point. Random sampling should ensure that the basic distribution of the points remains the same. 
+```{r subsampled scatter plot}
+plotSubSampleScatter<-function(vec1,vec2,points=50000,...) {
+  i<-sample(1:length(vec1),points)
+  ssvec1<-vec1[i]
+  ssvec2<-vec2[i]
+  plot(ssvec1,ssvec2,pch=16,cex=0.5,col="#0000ff33",...)
+}
+par(mfrow=c(1,2))
+plotSubSampleScatter(gvals1,rvals1,points=50000, xlab="green pixel value", 
+                     ylab="red pixel value", main="601 herm2  (DC inactivated)")
+plotSubSampleScatter(gvals2,rvals2,points=50000, xlab="green pixel value", 
+                     ylab="red pixel value", main="604 herm2  (DC not inactivated)")
+```
+
+#Transforming the data
+The pixel values are very skewed in their distribution - many low values and few high values. To imporve the distribution we will log transform the values and repeat the plots.
+
+```{r plotting transformed vaues}
+logG1<-log2(gvals1)
+logR1<-log2(rvals1)
+logG2<-log2(gvals2)
+logR2<-log2(rvals2)
+
+par(mfrow=c(1,2))
+smoothScatter(logG1,logR1,xlab="log2(green)",ylab="log2(red)",
+              main="601 herm2  (DC inactivated)")
+smoothScatter(logG2,logR2,xlab="log2(green)",ylab="log2(red)",
+              main="604 herm2  (DC not inactivated)")
+
+plotSubSampleScatter(logG1,logR1,points=50000,xlab="log2(green)", ylab="log2(red)",
+                     main="601 herm2  (DC inactivated)")
+plotSubSampleScatter(logG2,logR2,points=50000,xlab="log2(green)", ylab="log2(red)",
+                     main="604 herm2  (DC not inactivated)")
+par(mfrow=c(2,2))
+hist(logG1,xlab="log2(green)",main="601 herm 2",col="green")
+hist(logR1,xlab="log2(red)",main="601 herm 2",col="red")
+hist(logG2,xlab="log2(green)",main="604 herm 2",col="green")
+hist(logR2,xlab="log2(red)",main="604 herm 2",col="red")
+
+```
+It is normal that log transformed values have these artefacts at low values. but at least data is better spread.
+
+#linear regression
+With the better distribution of the log transformed values, we can fit a linear regression line to each sample as a rough estimate of the relationship between green and red overall in each image.
+
+```{r linear regression}
+h1lm<-lm(logR1~logG1)
+h2lm<-lm(logR2~logG2)
+summary(h1lm)
+summary(h2lm)
+```
+
+there is a slightly different slope to the regression line (coefficients->Estimate, second line). For 601 the slope is 0.47 for 604 the slope is 0.5.
+
+#ratios of red/green
+To compare between plots we need to normalise red values to the green 
+
+
+```{r }
+rgRatio1<-rvals1/gvals1
+rgRatio2<-rvals2/gvals2
+par(mfrow=c(1,3))
+boxplot(rgRatio1,rgRatio2,names=c("601","604"),col=c("purple","blue"), main="raw ratios")
+hist(rgRatio1,main="601 herm 2 raw ratios",xlab="R/G",col="purple", cex.main=1)
+hist(rgRatio2,main="604 herm 2 raw ratios",xlab="R/G",col="blue", cex.main=1)
+
+logRatio1<-log2(rgRatio1)
+logRatio2<-log2(rgRatio2)
+boxplot(logRatio1,logRatio2,names=c("601","604"),col=c("purple","blue"), main="log ratios")
+hist(logRatio1,main="601 herm 2 log ratios",xlab="log2(R/G)",col="purple", 
+     breaks=20, cex.main=1)
+abline(v=mean(logRatio1),col="orange")
+hist(logRatio2,main="604 herm 2 log ratios",xlab="log2(R/G)",col="blue", 
+     breaks=20, cex.main=1)
+abline(v=mean(logRatio2),col="orange")
+```
+The boxplot and histograms suggest that 604 is skewed towards higher ratios (i.e. higher red or lower green)
+We can use the Kolmogorov-Smirnov test to test if the two samples come from the same distribution.
+```{r compare distributions}
+kst<-ks.test(logRatio1,logRatio2)
+kst
+```
+
+So there is a statistically significant difference in the distributions. There are so many data points that this is not surprising.
+
+Can also plot histograms as overlapping density plots (both raw ratios and log tranformed ratios).
+
+```{r}
+par(mfrow=c(1,2))
+
+plot(density(rvals1/gvals1,adjust=3), col="purple", main="distribution of R/G")
+lines(density(rvals2/gvals2,adjust=3), col="blue")
+legend("topright",c("601 herm2","604 herm2"), lty=c(1,1), col=c("purple","blue"),
+       lwd=c(2.5,2.5), cex=0.6)
+
+plot(density(logR1-logG1,adjust=3), col="purple", main="distribution of log(R/G)",
+     ylim=c(0,0.4))
+lines(density(logR2-logG2,adjust=3), col="blue")
+legend("topleft",c("601 herm2","604 herm2"), lty=c(1,1), col=c("purple","blue"),
+       lwd=c(2.5,2.5), cex=0.6)
+
+```
+
+Going back to the separate colours:
+```{r boxplot unnormalised values}
+boxplot(logG1,logR1,logG2,logR2, varwidth=TRUE, notch=TRUE, 
+        names=c("601 log(G)", "601 log(R)", "604 log(G)", "604 log(R)"), 
+        col=c("green", "red", "green", "red"))
+```
+It looks like the difference in ratios is not necessarily higher red values in 604 but rather lower green levels 
+
+# Conclusion
+Comparing these two worms it seems that 604 strain without the tev cs has lower expression of autosomal GFP gene.
