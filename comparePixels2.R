@@ -48,7 +48,6 @@ tiffList$name<-with(tiffList,paste0("worm",wormNum,"_",sex,"_",strain))
 #process tiffs in pairs and process immediately to avoid loading many big objects at once
 pixelList=list()
 for (f in seq(1,dim(tiffList)[1],by=2)) {
-  f=1
   g<-readTIFF(tiffList[f,1],all=TRUE,as.is=TRUE)
   r<-readTIFF(tiffList[f+1,1],all=TRUE,as.is=TRUE)
   #record how many z sections there are
